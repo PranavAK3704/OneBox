@@ -1,5 +1,8 @@
-import React from 'react';
-import { Email } from '../types';
+'use client';
+
+import React, { useEffect, useState } from "react";
+import { Email } from "@/types";
+import SuggestedReply from "./SuggestedReply";
 
 interface EmailDetailProps {
   email: Email | null;
@@ -7,27 +10,34 @@ interface EmailDetailProps {
 }
 
 const EmailDetail: React.FC<EmailDetailProps> = ({ email, loading }) => {
+  const [formattedDate, setFormattedDate] = useState("");
+
+  // ✅ Format date ONLY on CLIENT
+  useEffect(() => {
+    if (email) {
+      const d = new Date(email.date);
+      setFormattedDate(
+        d.toLocaleString("en-IN", {
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      );
+    }
+  }, [email]);
+
   const getCategoryColor = (category: string): string => {
     const colors: Record<string, string> = {
-      'Interested': 'category-interested',
-      'Meeting Booked': 'category-meeting',
-      'Not Interested': 'category-not-interested',
-      'Spam': 'category-spam',
-      'Out of Office': 'category-ooo',
+      "Interested": "category-interested",
+      "Meeting Booked": "category-meeting",
+      "Not Interested": "category-not-interested",
+      "Spam": "category-spam",
+      "Out of Office": "category-ooo",
     };
-    return colors[category] || 'category-default';
-  };
-
-  const formatDateTime = (dateStr: string): string => {
-    const date = new Date(dateStr);
-    return date.toLocaleString('en-US', {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
+    return colors[category] || "category-default";
   };
 
   if (loading) {
@@ -59,7 +69,8 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ email, loading }) => {
     <div className="email-detail">
       <div className="detail-header">
         <div className="detail-title-row">
-          <h1 className="detail-subject">{email.subject || '(No Subject)'}</h1>
+          <h1 className="detail-subject">{email.subject || "(No Subject)"}</h1>
+
           <div className={`detail-category ${getCategoryColor(email.category)}`}>
             {email.category}
           </div>
@@ -70,14 +81,19 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ email, loading }) => {
             <span className="meta-label">From:</span>
             <span className="meta-value">{email.from}</span>
           </div>
+
           <div className="meta-item">
             <span className="meta-label">To:</span>
             <span className="meta-value">{email.to}</span>
           </div>
+
           <div className="meta-item">
             <span className="meta-label">Date:</span>
-            <span className="meta-value">{formatDateTime(email.date)}</span>
+            <span className="meta-value">
+              {formattedDate || "Loading..."} {/* client-only */}
+            </span>
           </div>
+
           <div className="meta-item">
             <span className="meta-label">Account:</span>
             <span className="meta-value account-badge">{email.accountId}</span>
@@ -87,17 +103,13 @@ const EmailDetail: React.FC<EmailDetailProps> = ({ email, loading }) => {
 
       <div className="detail-body">
         <div className="body-content">
-          {email.body.split('\n').map((line, idx) => (
-            <p key={idx}>{line || '\u00A0'}</p>
+          {email.body.split("\n").map((line, idx) => (
+            <p key={idx}>{line || "\u00A0"}</p>
           ))}
         </div>
-      </div>
 
-      <div className="detail-footer">
-        <div className="footer-info">
-          <span>Message ID: {email.messageId}</span>
-          {email.uid && <span>UID: {email.uid}</span>}
-        </div>
+        {/* ✓ Suggested Reply Section */}
+        <SuggestedReply email={email} />
       </div>
     </div>
   );
