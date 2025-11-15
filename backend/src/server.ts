@@ -3,7 +3,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import { startImapWorker } from "./imap-worker";
 import { initializeIndex } from "./es-utils";
-import { initializeVectorDB } from "./rag-service";
+import { initializeVectorDB } from "./rag-service";   // <-- ensure this import exists
 import routes from "./routes";
 
 dotenv.config();
@@ -21,12 +21,15 @@ app.use("/api", routes);
 // Start server
 app.listen(PORT, async () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
-  
-  // Initialize Elasticsearch index
+
+  // 1. Initialize Elasticsearch index
   await initializeIndex();
-  
-  // Start IMAP workers
+
+  // 2. Initialize Vector DB (IMPORTANT FOR RAG)
+  await initializeVectorDB();  // <-- ADDED
+
+  // 3. Start IMAP workers
   await startImapWorker();
-  
+
   console.log("✅ Backend fully initialized");
 });

@@ -10,7 +10,7 @@ const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const qdrantClient = new QdrantClient({ url: QDRANT_URL });
 const COLLECTION_NAME = 'email_context';
 
-// Your product/outreach context - CUSTOMIZE THIS!
+// Your product/outreach context
 const contextData = [
   {
     id: 1,
@@ -24,71 +24,67 @@ const contextData = [
   },
   {
     id: 3,
-    text: "For meeting requests, my availability is weekdays 10 AM - 6 PM IST. I prefer video calls via Google Meet or Zoom.",
+    text: "My availability is weekdays 10 AM - 6 PM IST. I prefer video calls via Google Meet or Zoom.",
     metadata: { type: "availability" }
   },
   {
     id: 4,
-    text: "My portfolio is at https://github.com/pranavpanna and I'm passionate about building scalable email automation systems.",
+    text: "My portfolio is at https://github.com/pranavpanna and I'm passionate about building scalable automation systems.",
     metadata: { type: "portfolio" }
   },
   {
     id: 5,
-    text: "When someone asks about salary expectations, mention that I'm looking for market-competitive rates based on the role and my experience level.",
+    text: "For salary expectations, mention that I'm looking for competitive compensation based on role & experience.",
     metadata: { type: "negotiation" }
   }
 ];
 
-// Initialize vector database
+// -------------------------------------------------------
+// Initialize vector DB
+// -------------------------------------------------------
 export async function initializeVectorDB() {
   try {
-    // Check if collection exists
     const collections = await qdrantClient.getCollections();
-    const collectionExists = collections.collections.some(
+    const exists = collections.collections.some(
       (c: any) => c.name === COLLECTION_NAME
     );
 
-    if (!collectionExists) {
-      // Create collection
+    if (!exists) {
       await qdrantClient.createCollection(COLLECTION_NAME, {
-        vectors: {
-          size: 384, // Using smaller embeddings for speed
-          distance: 'Cosine',
-        },
+        vectors: { size: 384, distance: "Cosine" },
       });
-      console.log('✅ Qdrant collection created');
 
-      // Store context data with embeddings
+      console.log("🧠 Qdrant collection created");
+
       await storeContextData();
     } else {
-      console.log('✅ Qdrant collection already exists');
+      console.log("🧠 Qdrant collection already exists");
     }
   } catch (err) {
-    console.error('❌ Error initializing Qdrant:', err);
+    console.error("❌ Error initializing Qdrant:", err);
   }
 }
 
-// Generate simple embeddings using text statistics (fallback, no API needed)
+// -------------------------------------------------------
+// Simple embedding generator (fallback)
+// -------------------------------------------------------
 function generateSimpleEmbedding(text: string): number[] {
-  const embedding = new Array(384).fill(0);
+  const vector = new Array(384).fill(0);
   const words = text.toLowerCase().split(/\s+/);
-  
-  // Simple hash-based embedding
+
   for (let i = 0; i < words.length; i++) {
     const word = words[i];
     for (let j = 0; j < word.length; j++) {
-      const charCode = word.charCodeAt(j);
-      const index = (charCode * (i + 1) * (j + 1)) % 384;
-      embedding[index] += 1;
+      const idx = (word.charCodeAt(j) * (i + 1) * (j + 1)) % 384;
+      vector[idx] += 1;
     }
   }
-  
-  // Normalize
-  const magnitude = Math.sqrt(embedding.reduce((sum, val) => sum + val * val, 0));
-  return embedding.map(val => magnitude > 0 ? val / magnitude : 0);
+
+  const mag = Math.sqrt(vector.reduce((s, v) => s + v * v, 0));
+  return vector.map((v) => (mag ? v / mag : 0));
 }
 
-// Store context data in vector database
+// Store seed context
 async function storeContextData() {
   try {
     const points = contextData.map((item) => ({
@@ -105,70 +101,65 @@ async function storeContextData() {
       points,
     });
 
-    console.log(`✅ Stored ${contextData.length} context items in Qdrant`);
+    console.log(`🧠 Stored ${points.length} context docs in Qdrant`);
   } catch (err) {
-    console.error('❌ Error storing context data:', err);
+    console.error("❌ Error storing context:", err);
   }
 }
 
-// Search for relevant context
-export async function searchContext(query: string, limit: number = 3): Promise<string[]> {
+// -------------------------------------------------------
+// Search vectors
+// -------------------------------------------------------
+export async function searchContext(query: string, limit = 3): Promise<string[]> {
   try {
-    const queryVector = generateSimpleEmbedding(query);
+    const queryVec = generateSimpleEmbedding(query);
 
-    const searchResult = await qdrantClient.search(COLLECTION_NAME, {
-      vector: queryVector,
+    const result = await qdrantClient.search(COLLECTION_NAME, {
+      vector: queryVec,
       limit,
     });
 
-    return searchResult.map((result: any) => result.payload.text);
+    return result.map((r: any) => r.payload.text);
   } catch (err) {
-    console.error('❌ Error searching context:', err);
-    // Fallback: return all context if search fails
-    return contextData.map(item => item.text);
+    console.error("❌ Context search error:", err);
+    return contextData.map((i) => i.text);
   }
 }
 
-// Generate reply using RAG
-export async function generateReply(emailSubject: string, emailBody: string): Promise<string> {
+// -------------------------------------------------------
+// Generate RAG reply
+// -------------------------------------------------------
+export async function generateReply(subject: string, body: string): Promise<string> {
   if (!GROQ_API_KEY) {
-    return "Error: Groq API key not configured. Please add GROQ_API_KEY to .env file.";
+    return "Error: Missing GROQ_API_KEY in environment.";
   }
 
   try {
-    // 1. Retrieve relevant context
-    const relevantContext = await searchContext(emailSubject + ' ' + emailBody);
-    
-    // 2. Build prompt with context
-    const contextText = relevantContext.join('\n\n');
-    
-    const prompt = `You are replying to an email. Use the context below to write a professional, personalized reply.
+    const retrieved = await searchContext(subject + " " + body);
+    const context = retrieved.join("\n\n");
 
-CONTEXT (use this information):
-${contextText}
+    const prompt = `
+You are replying to an email. Use ONLY the context below to craft a concise, friendly, 2-3 sentence reply.
 
-EMAIL TO REPLY TO:
-Subject: ${emailSubject}
-Body: ${emailBody}
+CONTEXT:
+${context}
 
-Write a brief, professional reply (2-3 sentences). Include relevant links or information from the context if applicable.
+EMAIL:
+Subject: ${subject}
+Body: ${body}
 
-Reply:`;
+Reply professionally and include relevant links if needed.
 
-    // 3. Generate reply with Groq
+Reply:
+`;
+
     const response = await axios.post(
-      'https://api.groq.com/openai/v1/chat/completions',
+      "https://api.groq.com/openai/v1/chat/completions",
       {
-        model: 'llama-3.1-8b-instant',
+        model: "llama-3.1-8b-instant",
         messages: [
-          {
-            role: 'system',
-            content: 'You are a professional email assistant. Write concise, friendly replies.',
-          },
-          {
-            role: 'user',
-            content: prompt,
-          },
+          { role: "system", content: "You are a helpful professional email assistant." },
+          { role: "user", content: prompt },
         ],
         temperature: 0.7,
         max_tokens: 200,
@@ -176,16 +167,14 @@ Reply:`;
       {
         headers: {
           Authorization: `Bearer ${GROQ_API_KEY}`,
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
       }
     );
 
     return response.data.choices[0].message.content.trim();
   } catch (err: any) {
-    console.error('❌ Error generating reply:', err.response?.data || err.message);
-    
-    // Fallback reply
-    return "Thank you for your email. I'll review this and get back to you shortly.";
+    console.error("❌ Error generating reply:", err.response?.data || err.message);
+    return "Thank you for the email! I will get back to you shortly.";
   }
 }
