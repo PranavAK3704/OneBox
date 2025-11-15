@@ -6,7 +6,7 @@ Implements all assignment requirements including real-time sync, AI categorizati
 Features Completed
 1. Real-Time IMAP Email Synchronization
 
-Persistent IMAP (IDLE mode) — no cron jobs.
+Persistent IMAP (IDLE mode) without cron jobs.
 
 Fetches last 30 days of emails on startup.
 
@@ -16,19 +16,13 @@ Multi-account ready (Account 1 + optional Account 2).
 
 2. Searchable Storage Using Elasticsearch
 
-Emails are indexed into a local Elasticsearch instance (via Docker).
+Emails indexed into local Elasticsearch via Docker.
 
 Full-text search (subject, body, from, to).
 
-Filters supported:
+Filters supported: account, folder, category.
 
-account
-
-folder
-
-category
-
-Efficient querying for up to thousands of emails.
+Efficient queries for large inboxes.
 
 3. AI-Based Email Categorization (Groq Llama 3.1)
 
@@ -48,111 +42,96 @@ Optimized AI usage:
 
 New emails (< 24 hours) use Groq AI.
 
-Older emails use a local keyword classifier (prevents rate limiting).
+Older emails use a local keyword classifier.
 
-Automatic fallback when Groq rate limits or fails.
+Automatic fallback on rate limits or errors.
 
 4. Slack and Webhook Automation
 
-When an email is classified as “Interested”:
+For emails categorized as “Interested”:
 
-Sends a Slack notification with sender + subject.
+Sends Slack notifications.
 
-Triggers a webhook event (via webhook.site or custom URL).
+Triggers webhook events (webhook.site or custom URLs).
 
-Built-in rate-limit handling.
+Graceful retry + rate-limit protection.
 
-5. Frontend Dashboard (Next.js 15)
+5. Full Frontend Dashboard (Next.js 15)
 
-Fully implemented user interface:
+Real-time inbox dashboard.
 
-Inbox view with email list and detail panel.
+Full-text search bar powered by Elasticsearch.
 
-Full-text Elasticsearch search bar.
+Filters: category, account, folder.
 
-Filters for category, account, and folder.
+Stats cards summarizing categories.
 
-Summary statistics cards.
+Email list + detail view.
 
-Clean, responsive UI with custom CSS.
+Client-only hydration-safe components.
 
-Hydration-safe components (all client side).
+Custom CSS UI.
 
 6. RAG-Based Suggested Replies (Final Interview Requirement)
 
-Fully implemented Retrieval-Augmented Generation system.
+Retrieval-Augmented Generation fully implemented.
 
-Product/outreach context embedded and stored in Qdrant vector DB.
+Product/outreach context stored in Qdrant vector DB.
 
-Simple embedding generator (no external API needed).
+Simple custom embedding generator (no external API required).
 
-Backend RAG pipeline:
+Backend retrieves relevant context and generates replies with Groq Llama 3.1.
 
-Retrieve relevant context from Qdrant
+Frontend Suggested Reply panel with:
 
-Build prompt
+generate
 
-Call Groq Llama 3.1
+regenerate
 
-Frontend:
+copy
 
-“Generate Suggested Reply” button
-
-Loading state
-
-Reply textarea
-
-Regenerate
-
-Copy to clipboard
-
-This completes the end-to-end intelligent reply system.
+This completes the full intelligent reply workflow end-to-end.
 
 Architecture Overview
                        ┌──────────────────────────────┐
                        │          Frontend             │
-                       │       Next.js Dashboard       │
-                       │  - Search / Filters           │
-                       │  - Email Detail View          │
-                       │  - Suggested Replies UI       │
+                       │          Next.js UI           │
+                       │ - Search / Filters            │
+                       │ - Email Detail                │
+                       │ - Suggested Replies           │
                        └───────────────┬──────────────┘
                                        │
-            HTTP (REST API)             │
                                        ▼
                        ┌──────────────────────────────┐
                        │            Backend            │
-                       │        Node.js + TS           │
-                       │  /api/emails                 │
-                       │  /api/emails/search          │
-                       │  /api/reply (RAG)            │
+                       │        Node.js + TypeScript   │
+                       │ - /api/emails                 │
+                       │ - /api/emails/search          │
+                       │ - /api/reply (RAG)            │
                        └───────┬───────────┬─────────┘
                                │           │
-                     IMAP Sync │           │ RAG Pipeline
+                     IMAP Sync │           │ RAG Engine
                                │           ▼
          ┌─────────────────────┘    ┌────────────────────┐
          │ IMAP Worker               │ Qdrant Vector DB    │
-         │ - IDLE mode               │ - Store context      │
-         │ - New mail detection      │ - Semantic search    │
+         │ - IDLE mode               │ - Context storage   │
+         │ - Real-time updates       │ - Semantic search   │
          └───────┬──────────────────┘
                  │
                  ▼
      ┌──────────────────────────┐
-     │ Elasticsearch Index        │
-     │ - Full-text search         │
-     │ - Category/filters         │
-     └───────────────────────────┘
-
+     │  Elasticsearch Index     │
+     │  Full-text email search  │
+     └──────────────────────────┘
                  ▼
      ┌──────────────────────────┐
-     │ Groq AI Classifier        │
-     │ - Llama 3.1 8B            │
-     └───────────────────────────┘
-
+     │   Groq AI Classifier     │
+     │   Llama 3.1 (8B)         │
+     └──────────────────────────┘
                  ▼
      ┌──────────────────────────┐
-     │ Slack + Webhooks          │
-     │ - Interested notifications │
-     └───────────────────────────┘
+     │   Slack + Webhooks       │
+     └──────────────────────────┘
 
 Setup Instructions
 1. Clone the Repository
@@ -165,7 +144,7 @@ docker-compose up -d
 
 3. Configure Environment Variables
 
-In backend/.env set:
+In backend/.env, set:
 
 IMAP credentials
 
@@ -182,37 +161,37 @@ cd backend
 npm install
 npm run dev
 
+
+Backend will run on:
+
+http://localhost:3000
+
 5. Start Frontend
 cd frontend
 npm install
 npm run dev
 
 
-Frontend runs at:
+Frontend will run on:
 
 http://localhost:3001
-
-
-Backend runs at:
-
-http://localhost:3000
 
 API Endpoints
 GET /api/emails
 
-Returns filtered list of emails.
+Returns list of emails with optional filters.
 
-GET /api/emails/search?q=...
+GET /api/emails/search?q=
 
-Full-text Elasticsearch search.
-
-GET /api/health
-
-Health check.
+Full-text search through Elasticsearch.
 
 POST /api/reply
 
-Generate suggested AI reply (RAG powered).
+Generates RAG-based suggested reply.
+
+GET /api/health
+
+Health check endpoint.
 
 Project Structure
 backend/
@@ -237,16 +216,16 @@ frontend/
     FilterBar.tsx
     SearchBar.tsx
   styles/
+
 docker/
   docker-compose.yml
 
 Demo Video
 
-(Replace this with your Loom link)
+Replace this with your Loom link:
 
 https://www.loom.com/share/cd47d55a424b4ff3a7c2963694f13676
 
 Final Notes
 
-This project implements all six required features including the advanced RAG system to qualify for final interview consideration.
-The system is optimized to handle large inboxes, avoid rate limits, and provide a smooth end-to-end experience.
+All six required features are fully implemented, including the advanced RAG-based suggested reply system. The system is optimized to handle large inboxes, avoid rate limits, and provide a complete end-to-end onebox experience.
