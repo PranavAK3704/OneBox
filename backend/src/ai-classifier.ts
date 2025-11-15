@@ -5,20 +5,32 @@ dotenv.config();
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
+/**
+ * 🔥 MAIN AI CLASSIFIER (Groq)
+ * Falls back to keywordClassify() on:
+ *  - No API key
+ *  - Rate limit errors
+ *  - Invalid responses
+ */
 export async function classifyEmail(subject: string, body: string): Promise<string> {
-  // Fallback to keyword-based if no API key
   if (!GROQ_API_KEY) {
     console.warn("⚠️ No Groq API key found, using keyword-based classification");
     return keywordClassify(subject, body);
   }
 
   try {
-    const prompt = `Classify this email into ONE category: Interested, Meeting Booked, Not Interested, Spam, or Out of Office.
+    const prompt = `
+Classify this email into EXACTLY ONE of the following categories:
+- Interested
+- Meeting Booked
+- Not Interested
+- Spam
+- Out of Office
 
 Email Subject: ${subject}
 Email Body: ${body.slice(0, 500)}
 
-Reply with ONLY the category name, nothing else.`;
+Return ONLY the category name.`;
 
     const response = await axios.post(
       "https://api.groq.com/openai/v1/chat/completions",
@@ -27,14 +39,15 @@ Reply with ONLY the category name, nothing else.`;
         messages: [
           {
             role: "system",
-            content: "You are an email classifier. Respond only with one of these categories: Interested, Meeting Booked, Not Interested, Spam, Out of Office"
+            content:
+              "You are an email classifier. Respond ONLY with one of these categories: Interested, Meeting Booked, Not Interested, Spam, Out of Office.",
           },
           {
             role: "user",
-            content: prompt
-          }
+            content: prompt,
+          },
         ],
-        temperature: 0.3,
+        temperature: 0.2,
         max_tokens: 20,
       },
       {
@@ -45,42 +58,67 @@ Reply with ONLY the category name, nothing else.`;
       }
     );
 
-    const category = response.data.choices[0].message.content.trim();
-    
-    const validCategories = ["Interested", "Meeting Booked", "Not Interested", "Spam", "Out of Office"];
-    if (validCategories.includes(category)) {
-      return category;
-    }
+    const raw = (response.data.choices?.[0]?.message?.content || "").trim();
 
-    console.warn(`⚠️ Invalid category: ${category}, using fallback`);
+    const validCategories = [
+      "Interested",
+      "Meeting Booked",
+      "Not Interested",
+      "Spam",
+      "Out of Office",
+    ];
+
+    const match = validCategories.find((v) =>
+      raw.toLowerCase().includes(v.toLowerCase())
+    );
+
+    if (match) return match;
+
+    console.warn(`⚠️ Invalid Groq category "${raw}", falling back`);
     return keywordClassify(subject, body);
   } catch (err: any) {
-    console.error("❌ Groq API error:", err.response?.data || err.message);
+    console.error("❌ Groq API error → fallback:", err.response?.data || err.message);
     return keywordClassify(subject, body);
   }
 }
 
-// Keyword-based fallback
-function keywordClassify(subject: string, body: string): string {
-  const text = (subject + ' ' + body).toLowerCase();
+/**
+ * 🧠 LOCAL KEYWORD CLASSIFIER (FALLBACK)
+ * Used for:
+ *  - Old emails
+ *  - No Groq key
+ *  - Rate limits
+ *  - Groq failures
+ */
+export function keywordClassify(subject: string, body: string): string {
+  const text = `${subject} ${body}`.toLowerCase();
 
-  if (text.match(/interested|sounds good|look forward|let's discuss|yes please|love to/i)) {
+  // Interested
+  if (
+    /interested|keen|sounds good|looks good|yes please|love to|let's discuss|follow up|connect soon/.test(
+      text
+    )
+  ) {
     return "Interested";
   }
-  
-  if (text.match(/meeting scheduled|calendar invite|zoom link|meeting confirmed|booked|appointment/i)) {
+
+  // Meeting Booked
+  if (/calendar invite|meeting scheduled|meeting confirmed|zoom link|booked/.test(text)) {
     return "Meeting Booked";
   }
-  
-  if (text.match(/out of office|ooo|vacation|away|unavailable|auto.?reply/i)) {
+
+  // Out of Office
+  if (/out of office|ooo|vacation|on leave|away from keyboard|auto.?reply/.test(text)) {
     return "Out of Office";
   }
-  
-  if (text.match(/unsubscribe|click here|limited offer|act now|special deal|spam/i)) {
+
+  // Spam
+  if (/unsubscribe|click here|limited offer|act now|congratulations|winner|spam/.test(text)) {
     return "Spam";
   }
-  
-  if (text.match(/not interested|no thank|pass|decline|not at this time/i)) {
+
+  // Not Interested
+  if (/not interested|no thanks|pass|decline|stop emailing|not at this time/.test(text)) {
     return "Not Interested";
   }
 

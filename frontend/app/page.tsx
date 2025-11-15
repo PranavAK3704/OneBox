@@ -23,6 +23,12 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState('');
   const [lastSync, setLastSync] = useState<Date>(new Date());
 
+  // 👇 Fix hydration issues: only render time on client
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   useEffect(() => {
     loadEmails();
     
@@ -108,11 +114,11 @@ export default function Home() {
             <h1 className="logo">📧 Onebox</h1>
             <p className="tagline">AI-Powered Email Aggregator</p>
           </div>
-          
+
           <div className="sync-indicator">
             <span className="sync-dot"></span>
             <span className="sync-text">
-              Last synced: {lastSync.toLocaleTimeString()}
+              Last synced: {mounted ? lastSync.toLocaleTimeString() : '...'}
             </span>
           </div>
         </div>

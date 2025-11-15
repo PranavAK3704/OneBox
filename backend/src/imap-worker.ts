@@ -2,7 +2,7 @@ import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
 import dotenv from "dotenv";
 import { indexEmail } from "./es-utils";
-import { classifyEmail } from "./ai-classifier";
+import { classifyEmail, keywordClassify } from "./ai-classifier";
 import { notifySlack, triggerWebhook } from "./notifier";
 
 dotenv.config();
@@ -21,17 +21,6 @@ export async function startImapWorker() {
       },
       accountId: "account1",
     },
-    // Account 2 - Comment out if not configured
-    // {
-    //   host: process.env.IMAP_ACCOUNT2_HOST!,
-    //   port: Number(process.env.IMAP_ACCOUNT2_PORT!),
-    //   secure: process.env.IMAP_ACCOUNT2_SECURE === "true",
-    //   auth: {
-    //     user: process.env.IMAP_ACCOUNT2_USER!,
-    //     pass: process.env.IMAP_ACCOUNT2_PASS!,
-    //   },
-    //   accountId: "account2",
-    // },
   ];
 
   for (const acc of accounts) {
@@ -54,7 +43,7 @@ async function createConnection(account: any) {
     logger: false,
   });
 
-  client.on("error", async (err) => {
+  client.on("error", (err) => {
     console.error(`❌ IMAP Error (${account.accountId}):`, err.message);
     setTimeout(() => createConnection(account), 5000);
   });
@@ -70,67 +59,53 @@ async function createConnection(account: any) {
 
     await client.mailboxOpen("INBOX");
 
-    // Fetch last 30 days
+    // Fetch last 30 days of emails
     const since = new Date();
     since.setDate(since.getDate() - 30);
 
     console.log(`📩 Fetching last 30 days for ${account.accountId}...`);
 
     const messages = [];
-    for await (const msg of client.fetch({ since }, { 
-      envelope: true, 
-      source: true,
-      uid: true 
-    })) {
+    for await (const msg of client.fetch({ since }, { envelope: true, source: true, uid: true })) {
       messages.push(msg);
     }
 
     console.log(`📨 Found ${messages.length} emails to process`);
 
-    // Process emails with delay to avoid rate limits
+    // Process historical emails fast
     for (let i = 0; i < messages.length; i++) {
-      const msg = messages[i];
       console.log(`📨 Processing ${i + 1}/${messages.length}...`);
-      await processEmail(msg, account.accountId, client);
-      
-      // Add delay between emails to avoid rate limits (only if more emails to process)
-      if (i < messages.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 1500)); // 1.5 second delay
-      }
+      await processEmail(messages[i], account.accountId, false);
+
+      await new Promise((r) => setTimeout(r, 250)); // small throttle
     }
 
-    console.log(`✅ Finished processing ${messages.length} emails`);
-    console.log(`👀 Listening for new emails (IDLE) on ${account.accountId}...`);
+    console.log(`👀 Listening for new emails on ${account.accountId}...`);
 
-    // Listen for new emails
-    client.on("exists", async (data) => {
+    client.on("exists", async () => {
       console.log(`🆕 New email detected on ${account.accountId}`);
-      
       const mailbox = await client.mailboxOpen("INBOX");
       const seq = `${mailbox.exists}:${mailbox.exists}`;
 
-      for await (const msg of client.fetch(seq, { 
-        envelope: true, 
-        source: true,
-        uid: true 
-      })) {
-        await processEmail(msg, account.accountId, client);
+      for await (const msg of client.fetch(seq, { envelope: true, source: true, uid: true })) {
+        await processEmail(msg, account.accountId, true);
       }
     });
 
-    // Keep IDLE connection alive
     await client.idle();
   } catch (err: any) {
-    console.error(`❌ Connection failed for ${account.accountId}:`, err.message);
+    console.error(`❌ Connection failed (${account.accountId}):`, err.message);
     setTimeout(() => createConnection(account), 5000);
   }
 }
 
-async function processEmail(msg: any, accountId: string, client: ImapFlow) {
+async function processEmail(msg: any, accountId: string, isNewEmail: boolean) {
   try {
-    // Parse email content
     const parsed = await simpleParser(msg.source);
-    
+
+    const rawBody = parsed.text || parsed.html || "";
+    const body = typeof rawBody === "string" ? rawBody : "";
+
     const emailData: any = {
       messageId: msg.envelope.messageId || msg.uid,
       accountId,
@@ -138,34 +113,47 @@ async function processEmail(msg: any, accountId: string, client: ImapFlow) {
       from: parsed.from?.text || "",
       to: parsed.to?.text || "",
       subject: parsed.subject || "",
-      body: parsed.text || parsed.html || "",
+      body,
       date: parsed.date || new Date(),
       uid: msg.uid,
     };
 
-    console.log(`📧 Processing: ${emailData.subject.substring(0, 50)}...`);
+    console.log(`📧 Processing: ${emailData.subject.substring(0, 60)}...`);
 
-    // 1. Classify email using AI (with built-in retry logic)
+    // Determine if email is new (use 1-day threshold)
+    const isRecent =
+      Date.now() - new Date(emailData.date).getTime() <
+      24 * 60 * 60 * 1000;
+
+    // === Classification Logic ===
     try {
-      const category = await classifyEmail(emailData.subject, emailData.body);
-      emailData.category = category;
-      console.log(`🏷️ Classified as: ${category}`);
-    } catch (classifyError: any) {
-      console.error(`⚠️ Classification failed, using default:`, classifyError.message);
-      emailData.category = "Not Interested";
+      if (isNewEmail || isRecent) {
+        emailData.category = await classifyEmail(emailData.subject, emailData.body);
+      } else {
+        emailData.category = keywordClassify(emailData.subject, emailData.body);
+      }
+
+      console.log(`🏷️ Classified as: ${emailData.category}`);
+    } catch (err: any) {
+      console.error("⚠️ AI classification failed, using keyword fallback:", err.message);
+      emailData.category = keywordClassify(emailData.subject, emailData.body);
     }
 
-    // 2. Index in Elasticsearch
+    // === Store in Elasticsearch ===
     await indexEmail(emailData);
 
-    // 3. Send notifications if "Interested"
+    // === Notifications ===
     if (emailData.category === "Interested") {
       console.log(`🎯 Interested email detected! Sending notifications...`);
       await notifySlack(emailData);
-      await triggerWebhook(emailData);
+      try {
+        await triggerWebhook(emailData);
+      } catch (err: any) {
+        console.error("❌ Webhook failed:", err.message);
+      }
     }
 
-    console.log(`✅ Processed: ${emailData.subject.substring(0, 50)}... [${emailData.category}]`);
+    console.log(`✅ Processed: ${emailData.subject.substring(0, 60)} [${emailData.category}]`);
   } catch (err: any) {
     console.error("❌ Error processing email:", err.message);
   }
